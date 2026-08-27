@@ -1,0 +1,7 @@
+run: docker compose up -d && npm install && npm run dev
+seed: docker exec -i $(docker compose ps -q db) psql -U postgres -d billing < migrations/001_init.sql
+base_url: http://localhost:3000
+endpoints:
+  - POST /generate
+  - GET /usage/:tenantId
+  - POST /webhooks/stripe
