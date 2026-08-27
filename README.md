@@ -1,87 +1,75 @@
-Absolutely. Your current README has escaped characters (`\#`, `\&`, `\_`) and HTML-style spacing artifacts, so GitHub will not render it cleanly.
-
-Replace the **entire contents** of `README.md` with this:
-
 # Metering & Billing Service
 
 A multi-tenant metering and billing service built with **Node.js, Express, PostgreSQL, and Stripe Test Mode**.
 
-The service tracks API and AI-token usage, enforces monthly quotas, prevents duplicate usage through idempotency keys, and integrates Stripe Checkout and webhooks for subscription management.
+## What the system does
 
-## What the System Does
+The service:
 
-The system:
-
-* Tracks API usage per tenant
-* Tracks AI-token usage and token costs
-* Enforces monthly usage quotas
-* Uses idempotency keys to prevent duplicate usage records
-* Provides a usage endpoint
-* Provides Stripe Checkout for upgrading tenants to Pro
-* Processes Stripe webhooks to update subscription plans
-* Verifies Stripe webhook signatures
-* Deduplicates processed Stripe webhook events
-* Supports multiple tenants with isolated usage and quotas
+* Tracks API usage per tenant.
+* Enforces monthly usage quotas.
+* Uses idempotency keys to prevent duplicate usage records.
+* Provides a monthly usage endpoint.
+* Calculates AI-token usage and token costs.
+* Provides Stripe Checkout for upgrading a tenant to Pro.
+* Processes Stripe webhooks to update subscription plans.
+* Verifies Stripe webhook signatures.
+* Deduplicates processed Stripe webhook events.
 
 ## Plans
 
-| Feature           |    Free |       Pro |
-| ----------------- | ------: | --------: |
-| API calls / month |   1,000 |    50,000 |
-| AI tokens / month | 100,000 | 5,000,000 |
+| Plan | API Calls / Month | AI Tokens / Month |
+| ---- | ----------------: | ----------------: |
+| Free |             1,000 |           100,000 |
+| Pro  |            50,000 |         5,000,000 |
 
 ## Architecture
 
 ```text
-                         +-------------------+
-                         |      Client       |
-                         +---------+---------+
-                                   |
-                                   v
-                         +-------------------+
-                         |   Express Server  |
-                         +---------+---------+
-                                   |
-              +----------------+---+---+----------------+
-              |                |       |                |
-              v                v       v                v
-         /generate        /usage/:id  /checkout   /webhooks/stripe
-              |                |       |                |
-              v                v       v                v
-       +-------------------------------------------------------+
-       |                    PostgreSQL                         |
-       |                                                       |
-       |  tenants                                             |
-       |  usage_events                                        |
-       |  processed_webhook_events                            |
-       +-------------------------------------------------------+
-                                   ^
-                                   |
-                                   |
-                              +----+----+
-                              |  Stripe |
-                              +---------+
+                    +-------------------+
+                    |      Client       |
+                    +---------+---------+
+                              |
+                              v
+                    +-------------------+
+                    |   Express Server  |
+                    +---------+---------+
+                              |
+             +----------------+----------------+
+             |                |                |
+             v                v                v
+        /generate        /usage/:id       /checkout
+             |                |                |
+             +----------------+                |
+                              |                v
+                              |          +-----------+
+                              |          |  Stripe   |
+                              |          +-----+-----+
+                              |                |
+                              |                |
+                              +<--- Webhook ---+
+                              |
+                              v
+                       +-------------+
+                       | PostgreSQL  |
+                       +-------------+
 ```
 
 ## Database
 
-The PostgreSQL database contains three main tables:
+The PostgreSQL database contains:
 
 * `tenants`
 * `usage_events`
 * `processed_webhook_events`
 
-### Usage Event Idempotency
-
-The `usage_events` table enforces a unique constraint on:
+The `usage_events` table uses a unique constraint on:
 
 ```text
 tenant_id + idempotency_key
 ```
 
-This prevents the same tenant and idempotency key combination from creating duplicate usage records.
-
-The application also handles duplicate requests by returning the existing usage event.
+This prevents the same tenant request from being counted more than once.
 
 ## Setup
 
@@ -91,26 +79,34 @@ The application also handles duplicate requests by returning the existing usage 
 docker compose up -d
 ```
 
-### 2. Install Dependencies
+### 2. Install dependencies
 
 ```bash
 npm install
 ```
 
-### 3. Configure Environment Variables
+### 3. Configure environment variables
 
-Create a `.env` file:
+Create a `.env` file based on `.env.example`.
+
+Example:
 
 ```env
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/billing
-STRIPE_SECRET_KEY=your_stripe_test_secret_key
-STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
+STRIPE_SECRET_KEY=sk_test_your_key_here
+STRIPE_WEBHOOK_SECRET=whsec_your_secret_here
 PORT=3000
 ```
 
-> Never commit real Stripe secret keys or webhook secrets to Git.
+Do not commit real Stripe secret keys or webhook secrets.
 
-### 4. Start the Server
+### 4. Initialize the database
+
+```bash
+docker exec -i $(docker compose ps -q db) psql -U postgres -d billing < migrations/001_init.sql
+```
+
+### 5. Start the server
 
 ```bash
 npm run dev
@@ -130,7 +126,7 @@ GET /health
 
 ## API Endpoints
 
-### Generate Usage Event
+### Generate
 
 ```text
 POST /generate
@@ -155,7 +151,11 @@ curl -X POST http://localhost:3000/generate \
 GET /usage/:tenantId
 ```
 
-Returns the tenant's current monthly usage.
+Returns the tenant's monthly:
+
+* API-call usage
+* AI-token usage
+* AI-token cost
 
 Example response:
 
@@ -191,45 +191,30 @@ Creates a Stripe Checkout Session for upgrading a tenant to Pro.
 POST /webhooks/stripe
 ```
 
-Processes Stripe subscription events and updates the tenant's subscription plan.
+Processes Stripe subscription events and updates the tenant's plan.
 
 ## Idempotency
 
 Usage requests require an idempotency key.
 
-When the same tenant sends the same idempotency key again, the existing usage event is returned instead of creating another event.
+If the same tenant sends the same idempotency key again, the existing usage event is returned instead of creating another usage event.
 
-Example:
-
-```text
-First request:
-wasDuplicate: false
-
-Second identical request:
-wasDuplicate: true
-```
-
-The database unique constraint provides an additional safety mechanism against concurrent duplicate requests.
+The database unique constraint provides an additional safety mechanism for concurrent requests.
 
 ## Quotas
 
 Monthly usage is calculated from the `usage_events` table.
 
-### Free Plan
+### Free plan
 
-The Free plan allows:
+* API-call limit: 1,000/month
+* AI-token limit: 100,000/month
 
-```text
-1,000 API calls / month
-100,000 AI tokens / month
-```
-
-The quota boundary was tested successfully:
+The tested boundary was:
 
 ```text
-API call 999  → HTTP 200
-API call 1000 → HTTP 200
-API call 1001 → HTTP 402
+1000 requests -> HTTP 200
+1001 requests -> HTTP 402
 ```
 
 The 1001st request returned:
@@ -241,23 +226,19 @@ The 1001st request returned:
 }
 ```
 
-### Pro Plan
+### Pro plan
 
-The Pro plan allows:
+* API-call limit: 50,000/month
+* AI-token limit: 5,000,000/month
 
-```text
-50,000 API calls / month
-5,000,000 AI tokens / month
-```
-
-The Pro quota boundary was tested successfully:
+The tested boundary was:
 
 ```text
-API call 50,000 → HTTP 200
-API call 50,001 → HTTP 429
+50000 requests -> HTTP 200
+50001 requests -> HTTP 429
 ```
 
-The over-quota request returned:
+The over-limit request returned:
 
 ```json
 {
@@ -268,39 +249,35 @@ The over-quota request returned:
 
 ## AI Token Pricing
 
-The service calculates AI-token costs using separate rates for:
+The service tracks:
 
 * Input tokens
 * Cached input tokens
 * Output tokens
 * Reasoning tokens
 
-Example test:
+The tested pricing example was:
 
 ```text
-Input tokens:         1,000
-Cached input tokens:    500
-Output tokens:          200
-Reasoning tokens:       300
+Input:          1000 tokens
+Cached input:    500 tokens
+Output:          200 tokens
+Reasoning:        300 tokens
 ```
 
-Expected calculation:
+Expected cost:
 
 ```text
-Input:
-1000 / 1000 × $0.50 = $0.50
+(1000 / 1000 × 0.50)
++ (500 / 1000 × 0.10)
++ (500 / 1000 × 1.50)
 
-Cached input:
-500 / 1000 × $0.10 = $0.05
-
-Output + reasoning:
-(200 + 300) / 1000 × $1.50 = $0.75
-
-Total:
-$0.50 + $0.05 + $0.75 = $1.30
+= 0.50 + 0.05 + 0.75
+= $1.30
+= 130 cents
 ```
 
-The usage endpoint reports:
+The usage endpoint reported:
 
 ```json
 {
@@ -313,15 +290,17 @@ The usage endpoint reports:
 
 ## Stripe Test Mode
 
-Stripe is configured in **Test/Sandbox Mode** for this project.
+Stripe is configured for test/sandbox mode.
 
-The Stripe CLI can forward webhook events to the local server:
+Start Stripe webhook forwarding with:
 
 ```bash
 stripe listen --forward-to localhost:3000/webhooks/stripe
 ```
 
-Successful Stripe Checkout testing demonstrated the following flow:
+The Stripe Checkout flow was tested successfully.
+
+The tested flow was:
 
 ```text
 POST /checkout
@@ -336,19 +315,16 @@ Payment completed
 checkout.session.completed
       |
       v
-Stripe webhook
+Webhook signature verification
       |
       v
-Signature verification
-      |
-      v
-Tenant identified using client_reference_id
+Tenant identified by client_reference_id
       |
       v
 Database updated
       |
       v
-free → pro
+free -> pro
 ```
 
 ## Stripe Webhook Security
@@ -359,95 +335,40 @@ Stripe webhook signatures are verified using:
 STRIPE_WEBHOOK_SECRET
 ```
 
-A forged webhook using an invalid signature was rejected with HTTP `400`.
-
-Example invalid signature:
-
-```text
-Stripe-Signature: t=123,v1=fake
-```
-
-Result:
+A forged webhook using a fake signature was rejected with HTTP 400:
 
 ```text
 Webhook signature verification failed:
 No signatures found matching the expected signature for payload.
 ```
 
-This demonstrates that webhook signature verification is enabled.
-
 ## Webhook Deduplication
 
-Processed Stripe webhook events are stored in:
+Processed Stripe event IDs are stored in:
 
 ```text
 processed_webhook_events
 ```
 
-The Stripe event ID is used to prevent the same webhook event from being processed more than once.
-
-Duplicate events return:
-
-```json
-{
-  "received": true,
-  "duplicate": true
-}
-```
-
-## Subscription Downgrade
-
-The application handles Stripe subscription cancellation events.
-
-When:
-
-```text
-customer.subscription.deleted
-```
-
-is received, the tenant associated with the Stripe subscription is changed from:
-
-```text
-pro → free
-```
-
-This behavior was tested successfully using the Stripe CLI.
-
-## Multi-Tenant Isolation
-
-Usage is stored and calculated per tenant.
-
-Example verification:
-
-```text
-Acme / Free Tenant:
-API calls: 2 / 1,000
-
-Pro Test Tenant:
-API calls: 50,000 / 50,000
-AI tokens: 2,000 / 5,000,000
-```
-
-Usage from one tenant does not affect another tenant's quota.
+If the same Stripe event is received again, it is treated as a duplicate instead of being processed again.
 
 ## Testing
 
-The system was tested with:
+The project was tested with:
 
-* PostgreSQL running through Docker
-* Express server running locally
-* API usage recording
-* Idempotency handling
-* Free-plan quota boundary
-* Pro-plan quota boundary
-* AI-token pricing
-* Usage endpoint
-* Stripe Checkout in Test Mode
-* Stripe webhook forwarding
-* Stripe webhook signature verification
-* Stripe subscription cancellation
-* Webhook event deduplication
-* Multi-tenant usage isolation
+* PostgreSQL running through Docker.
+* Express server running locally.
+* API usage tracking.
+* Idempotency behavior.
+* Free-plan quota boundary.
+* Pro-plan quota boundary.
+* AI-token pricing.
+* Stripe Checkout in test mode.
+* Stripe CLI webhook forwarding.
+* Stripe subscription cancellation.
+* Stripe webhook signature verification.
+* Stripe webhook event deduplication.
+* Tenant isolation.
 
 ## Evidence
 
@@ -457,41 +378,33 @@ Detailed test results and command outputs are documented in:
 EVIDENCE.md
 ```
 
-The evidence includes:
+## Build Log
 
-* Idempotency test
-* Free-plan quota boundary
-* Pro-plan quota boundary
-* AI-token pricing
-* Stripe Checkout
-* Stripe webhook processing
-* Forged webhook rejection
-* Subscription cancellation
-* Multi-tenant isolation
+Implementation progress is documented in:
+
+```text
+buildlog.md
+```
+
+## Environment Variables
+
+Example environment configuration is provided in:
+
+```text
+.env.example
+```
+
+Real credentials should be stored only in `.env` and should never be committed.
 
 ## Limitations
 
 This project does not implement:
 
 * Proration
-* Production invoicing
+* Production payment processing
 * Refund processing
 * Tax calculation
-* Production payment processing
-* Advanced billing adjustments
+* Advanced invoicing
+* Other production-grade billing functionality
 
-Stripe is configured for **Test/Sandbox Mode only**.
-
-## Tech Stack
-
-* **Node.js**
-* **Express**
-* **PostgreSQL**
-* **Docker**
-* **Stripe**
-* **Stripe CLI**
-* **JavaScript**
-
-## Project Status
-
-The core metering, quota enforcement, token pricing, idempotency, multi-tenant isolation, Stripe Checkout, and Stripe webhook flows have been implemented and tested successfully.
+Stripe is configured for test/sandbox mode only.
