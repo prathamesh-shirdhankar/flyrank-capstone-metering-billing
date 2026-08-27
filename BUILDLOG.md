@@ -1,26 +1,27 @@
-\# Build Log
+# Build Log
 
-
-
-\- Set up PostgreSQL 16 using Docker Compose.
-
-\- Created the tenants, usage\_events, and processed\_webhook\_events tables.
-
-\- Implemented monthly API-call quotas and usage tracking.
-
-\- Implemented idempotent usage recording using a unique tenant\_id + idempotency\_key constraint.
-
-\- Tested the quota boundary with a free tenant. The 1000th API call succeeded and the 1001st returned HTTP 402.
-
-\- Installed and authenticated the Stripe CLI in Stripe test mode.
-
-\- Configured Stripe webhook forwarding to the local Express server.
-
-\- Fixed the Stripe raw-body middleware ordering so webhook signature verification works.
-
-\- Tested a forged webhook and confirmed that signature verification rejects it.
-
-\- Added a Stripe Checkout route using client\_reference\_id to associate the checkout with a tenant.
-
-\- Successfully completed a Stripe test-mode checkout and confirmed the tenant changed from free to pro.
-
+- Set up PostgreSQL 16 using Docker Compose.
+- Created the `tenants`, `usage_events`, and `processed_webhook_events` tables.
+- Implemented monthly API-call and AI-token usage tracking.
+- Implemented Free and Pro monthly usage quotas.
+- Implemented idempotent usage recording using a unique `(tenant_id, idempotency_key)` constraint.
+- Added race-condition protection for concurrent idempotent requests.
+- Tested idempotency and confirmed duplicate requests return the existing usage event without creating a second event.
+- Tested the Free-plan quota boundary: the 1000th API call succeeded and the 1001st returned HTTP 402.
+- Tested the Pro-plan quota boundary: the 50,000th API call succeeded and the 50,001st returned HTTP 429.
+- Implemented AI token metering for input, cached-input, output, and reasoning tokens.
+- Implemented token pricing with cached-input pricing and reasoning tokens billed at the output rate.
+- Verified the token-pricing example produced a cost of 130 cents ($1.30).
+- Extended the usage endpoint to report API usage, AI-token usage, quota limits, and calculated AI-token cost.
+- Installed and authenticated the Stripe CLI in Stripe test mode.
+- Configured Stripe webhook forwarding to the local Express server.
+- Fixed the Stripe raw-body middleware ordering so webhook signature verification works.
+- Tested a forged webhook and confirmed that invalid Stripe signatures are rejected.
+- Added Stripe Checkout for upgrading a tenant to Pro.
+- Used `client_reference_id` to associate a Stripe Checkout Session with the correct tenant.
+- Successfully completed a Stripe test-mode Checkout and confirmed the tenant changed from Free to Pro.
+- Implemented Stripe webhook event deduplication using `processed_webhook_events`.
+- Tested Stripe subscription cancellation and confirmed the `customer.subscription.deleted` webhook changed the tenant from Pro back to Free.
+- Verified tenant-level usage isolation by confirming that usage generated for one tenant did not change another tenant's usage.
+- Added and verified the `/health` endpoint.
+- Documented implementation and testing evidence in `EVIDENCE.md`.
