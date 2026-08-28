@@ -1,6 +1,6 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-CREATE TABLE tenants (
+CREATE TABLE IF NOT EXISTS tenants (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   plan TEXT NOT NULL DEFAULT 'free',
@@ -9,7 +9,7 @@ CREATE TABLE tenants (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE usage_events (
+CREATE TABLE IF NOT EXISTS usage_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id),
   type TEXT NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE usage_events (
   UNIQUE (tenant_id, idempotency_key)
 );
 
-CREATE TABLE processed_webhook_events (
+CREATE TABLE IF NOT EXISTS processed_webhook_events (
   stripe_event_id TEXT PRIMARY KEY,
   processed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

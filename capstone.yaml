@@ -1,7 +1,9 @@
 run: docker compose up -d && npm install && npm run dev
-seed: docker exec -i $(docker compose ps -q db) psql -U postgres -d billing < migrations/001_init.sql
+seed: docker exec -i $(docker compose ps -q db) psql -U postgres -d billing -f migrations/001_init.sql && docker exec -i $(docker compose ps -q db) psql -U postgres -d billing -c "INSERT INTO tenants (id, name, plan) VALUES ('15247435-0fe5-48c7-9791-46ac6920fd13', 'Acme Inc', 'free') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name; INSERT INTO tenants (id, name, plan) VALUES ('c89e0d9c-6ef3-4537-b03c-1831e3db212f', 'Pro Test Tenant', 'pro') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, plan = EXCLUDED.plan; INSERT INTO tenants (id, name, plan) VALUES ('bb916827-d5c7-4791-a201-4fa79732db9b', 'Quota Test Tenant', 'free') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, plan = EXCLUDED.plan;"
 base_url: http://localhost:3000
 endpoints:
+  - GET /health
   - POST /generate
   - GET /usage/:tenantId
+  - POST /checkout
   - POST /webhooks/stripe

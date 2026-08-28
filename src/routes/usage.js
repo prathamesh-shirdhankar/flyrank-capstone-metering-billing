@@ -1,9 +1,13 @@
 const express = require('express');
+
 const router = express.Router();
 
 const { pool } = require('../db');
 const { getMonthlyUsage, PLAN_LIMITS } = require('../services/quotaService');
-const { calculateTokenCostCents } = require('../services/costService');
+const {
+  calculateTokenCostCents,
+  calculateApiCallCostCents,
+} = require('../services/costService');
 
 router.get('/usage/:tenantId', async (req, res) => {
   try {
@@ -22,6 +26,8 @@ router.get('/usage/:tenantId', async (req, res) => {
 
     const apiUsed = await getMonthlyUsage(pool, tenantId, 'api_call');
     const tokensUsed = await getMonthlyUsage(pool, tenantId, 'ai_tokens');
+
+    const apiCallCostCents = calculateApiCallCostCents(apiUsed);
 
     const tokenRes = await pool.query(
       `SELECT
@@ -51,6 +57,8 @@ router.get('/usage/:tenantId', async (req, res) => {
       api_calls: {
         used: apiUsed,
         limit: PLAN_LIMITS[tenant.plan].api_call,
+        cost_cents: apiCallCostCents,
+        cost_dollars: (apiCallCostCents / 100).toFixed(2),
       },
 
       ai_tokens: {

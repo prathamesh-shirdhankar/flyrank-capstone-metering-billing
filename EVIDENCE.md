@@ -1,6 +1,6 @@
 # Evidence
 
-## 1. Idempotent metering
+## 1. Idempotent Metering
 
 Tenant ID:
 
@@ -8,15 +8,17 @@ Tenant ID:
 
 The same `POST /generate` request was sent twice using:
 
-`Idempotency-Key: test-key-1`
+```text
+Idempotency-Key: test-key-1
+```
 
-First request returned:
+The first request returned:
 
 ```text
 wasDuplicate: false
 ```
 
-Second identical request returned:
+The second identical request returned:
 
 ```text
 wasDuplicate: true
@@ -30,9 +32,11 @@ The database also enforces a unique constraint on:
 (tenant_id, idempotency_key)
 ```
 
+This provides an additional database-level safeguard against duplicate usage records.
+
 ---
 
-## 2. Free-plan quota boundary (402)
+## 2. Free-Plan Quota Boundary
 
 Quota-test tenant:
 
@@ -40,7 +44,9 @@ Quota-test tenant:
 
 Free-plan API-call limit:
 
-`1000 calls/month`
+```text
+1000 calls/month
+```
 
 Results:
 
@@ -59,11 +65,11 @@ The 1001st request returned:
 }
 ```
 
-This demonstrates that the free tenant can make 1000 API calls and that the 1001st call is rejected with HTTP 402.
+This demonstrates that the Free tenant can make 1000 API calls and that the 1001st call is rejected with HTTP 402 Payment Required.
 
 ---
 
-## 3. Pro-plan quota boundary (429)
+## 3. Pro-Plan Quota Boundary
 
 Pro test tenant:
 
@@ -97,7 +103,7 @@ The 50,000th API call succeeded:
 }
 ```
 
-The next API call returned HTTP 429:
+The next API call returned:
 
 ```text
 HTTP/1.1 429 Too Many Requests
@@ -117,7 +123,65 @@ This demonstrates correct Pro-tier quota enforcement.
 
 ---
 
-## 4. Forged Stripe webhook rejected
+## 4. Generate Endpoint Validation
+
+The `/generate` endpoint was tested with invalid input.
+
+### Missing Tenant ID / Idempotency Key
+
+Request:
+
+```text
+POST /generate
+Idempotency-Key: bv-1
+Body: {}
+```
+
+Response:
+
+```json
+{
+  "error": "tenantId and Idempotency-Key header are required"
+}
+```
+
+### Invalid JSON
+
+The endpoint was tested with malformed JSON and returned:
+
+```json
+{
+  "error": "bad_request",
+  "message": "Invalid JSON request body"
+}
+```
+
+### Invalid Tenant UUID
+
+An invalid tenant ID was rejected before querying PostgreSQL:
+
+```json
+{
+  "error": "invalid tenantId",
+  "message": "tenantId must be a valid UUID"
+}
+```
+
+### Valid UUID but Nonexistent Tenant
+
+A correctly formatted UUID that does not exist in the database returned:
+
+```json
+{
+  "error": "tenant not found"
+}
+```
+
+These tests demonstrate validation for required fields, malformed JSON, UUID format, and tenant existence.
+
+---
+
+## 5. Stripe Webhook Signature Verification
 
 A forged webhook was sent with an invalid Stripe signature:
 
@@ -128,7 +192,7 @@ curl.exe -X POST http://localhost:3000/webhooks/stripe `
   -d '{"fake":"event"}'
 ```
 
-The server rejected the request:
+The server rejected the request with:
 
 ```text
 Webhook signature verification failed: No signatures found matching the expected signature for payload.
@@ -138,13 +202,17 @@ This demonstrates that Stripe webhook signature verification is enabled and inva
 
 ---
 
-## 5. Stripe Checkout and Pro upgrade
+## 6. Stripe Checkout and Pro Upgrade
 
-A Checkout Session was created for tenant:
+A Stripe Checkout Session was created through:
 
-`bb916827-d5c7-4791-a201-4fa79732db9b`
+```text
+POST /checkout
+```
 
-The checkout was completed successfully in Stripe test mode.
+The request used a tenant ID and returned a Stripe Checkout URL.
+
+The checkout was completed successfully in Stripe Test Mode using a Stripe test card.
 
 The browser displayed:
 
@@ -162,30 +230,58 @@ The Stripe CLI forwarded the webhook to:
 http://localhost:3000/webhooks/stripe
 ```
 
-The webhook listener showed successful HTTP 200 responses, including:
+The Stripe CLI showed successful HTTP 200 responses, including:
 
 ```text
+--> checkout.session.completed
 <-- [200] POST http://localhost:3000/webhooks/stripe
 ```
 
-Database verification after checkout:
+The final database verification for the successfully upgraded tenant was:
 
 ```text
-id                                    | name               | plan | stripe_customer_id | stripe_subscription_id
---------------------------------------+--------------------+------+--------------------+------------------------------
-bb916827-d5c7-4791-a201-4fa79732db9b | Quota Test Tenant  | pro  | cus_V9QR3IJmTXMTZA  | sub_1U97aXFqujTPnt3gcCKJjk2p
+id                                    | name     | plan | stripe_customer_id | stripe_subscription_id
+--------------------------------------+----------+------+--------------------+------------------------------
+15247435-0fe5-48c7-9791-46ac6920fd13 | Acme Inc | pro  | cus_V9bfLnCYmFVqjD | sub_1U9ISYFqujTPnt3gBekO3LXY
 ```
 
-This proves the Stripe Checkout → `checkout.session.completed` webhook → tenant upgrade flow.
+This proves the:
+
+```text
+POST /checkout
+        |
+        v
+Stripe Checkout
+        |
+        v
+Payment completed
+        |
+        v
+checkout.session.completed
+        |
+        v
+Webhook verification
+        |
+        v
+Tenant identified by client_reference_id
+        |
+        v
+Database updated
+        |
+        v
+Free -> Pro
+```
+
+flow.
 
 ---
 
-## 6. Stripe subscription cancellation and downgrade
+## 7. Stripe Subscription Cancellation and Downgrade
 
-The Pro subscription was cancelled in Stripe test mode using:
+The Pro subscription was cancelled in Stripe Test Mode using:
 
 ```text
-stripe subscriptions cancel sub_1U97aXFqujTPnt3gcCKJjk2p
+stripe subscriptions cancel sub_1U9ISYFqujTPnt3gBekO3LXY
 ```
 
 Stripe returned the subscription with:
@@ -201,19 +297,47 @@ The Stripe CLI webhook listener received:
 <-- [200] POST http://localhost:3000/webhooks/stripe
 ```
 
-Database verification afterward:
+The webhook handler changed the tenant plan from Pro back to Free.
+
+This demonstrates automatic:
 
 ```text
-id                                    | name               | plan | stripe_customer_id | stripe_subscription_id
---------------------------------------+--------------------+------+--------------------+------------------------------
-bb916827-d5c7-4791-a201-4fa79732db9b | Quota Test Tenant  | free | cus_V9QR3IJmTXMTZA  | sub_1U97aXFqujTPnt3gcCKJjk2p
+Pro -> Free
 ```
 
-This proves that the `customer.subscription.deleted` webhook changes the tenant from Pro back to Free.
+plan synchronization when a Stripe subscription is deleted.
 
 ---
 
-## 7. AI token metering and pricing
+## 8. Stripe Webhook Deduplication
+
+Stripe CLI delivered the same `checkout.session.completed` event multiple times.
+
+Event ID:
+
+```text
+evt_1U9I2RFqujTPnt3gemzdTqXs
+```
+
+The application logged:
+
+```text
+[webhook] duplicate event ignored: evt_1U9I2RFqujTPnt3gemzdTqXs
+```
+
+The event ID is stored in:
+
+```text
+processed_webhook_events
+```
+
+The webhook handler checks whether the event ID has already been processed before applying the event.
+
+This demonstrates idempotent Stripe webhook processing.
+
+---
+
+## 9. AI Token Metering and Pricing
 
 Tenant:
 
@@ -258,19 +382,10 @@ Expected cost:
 = 130 cents
 ```
 
-The `/usage` endpoint returned:
+The `/usage` endpoint reported:
 
 ```json
 {
-  "plan": "pro",
-  "api_calls": {
-    "used": 50000,
-    "limit": 50000
-  },
-  "ai_tokens": {
-    "used": 2000,
-    "limit": 5000000
-  },
   "ai_token_cost": {
     "cents": 130,
     "dollars": "1.30"
@@ -282,15 +397,67 @@ This confirms that the implemented token pricing matches the expected `$1.30`.
 
 ---
 
-## 8. Usage endpoint reports monthly usage and cost
+## 10. API-Call Cost Reporting
+
+For the Free tenant:
+
+```text
+15247435-0fe5-48c7-9791-46ac6920fd13
+```
+
+The usage endpoint returned:
+
+```json
+{
+  "plan": "free",
+  "api_calls": {
+    "used": 2,
+    "limit": 1000,
+    "cost_cents": 2,
+    "cost_dollars": "0.02"
+  },
+  "ai_tokens": {
+    "used": 0,
+    "limit": 100000
+  },
+  "ai_token_cost": {
+    "cents": 0,
+    "dollars": "0.00"
+  }
+}
+```
+
+API-call pricing is:
+
+```text
+$0.01 per API call
+```
+
+Therefore:
+
+```text
+2 API calls × $0.01 = $0.02
+```
+
+This demonstrates that API usage is converted into a monthly monetary cost.
+
+---
+
+## 11. Usage Endpoint
 
 For the Pro tenant:
 
 ```text
-curl.exe http://localhost:3000/usage/c89e0d9c-6ef3-4537-b03c-1831e3db212f
+c89e0d9c-6ef3-4537-b03c-1831e3db212f
 ```
 
-Response:
+The request was:
+
+```text
+GET /usage/c89e0d9c-6ef3-4537-b03c-1831e3db212f
+```
+
+The endpoint returned:
 
 ```json
 {
@@ -310,67 +477,39 @@ Response:
 }
 ```
 
-The endpoint therefore reports API usage, AI-token usage, quota limits, and calculated token cost for the tenant.
+The endpoint therefore reports:
+
+- monthly API usage
+- API-call quota
+- monthly AI-token usage
+- AI-token quota
+- calculated AI-token cost
 
 ---
 
-## 9. Tenant data isolation
+## 12. Tenant Data Isolation
 
-Two different tenants were checked:
+Two different tenants were checked.
 
-### Acme Inc.
+### Acme Inc
 
 Tenant ID:
 
-`15247435-0fe5-48c7-9791-46ac6920fd13`
-
-Usage before the isolation test:
-
-```json
-{
-  "plan": "free",
-  "api_calls": {
-    "used": 1,
-    "limit": 1000
-  },
-  "ai_tokens": {
-    "used": 0,
-    "limit": 100000
-  },
-  "ai_token_cost": {
-    "cents": 0,
-    "dollars": "0.00"
-  }
-}
+```text
+15247435-0fe5-48c7-9791-46ac6920fd13
 ```
 
-One API call was then generated for Acme.
+One API call was generated for Acme.
 
-The resulting usage was:
-
-```json
-{
-  "plan": "free",
-  "api_calls": {
-    "used": 2,
-    "limit": 1000
-  },
-  "ai_tokens": {
-    "used": 0,
-    "limit": 100000
-  },
-  "ai_token_cost": {
-    "cents": 0,
-    "dollars": "0.00"
-  }
-}
-```
+The resulting usage increased only for Acme.
 
 ### Pro Test Tenant
 
 Tenant ID:
 
-`c89e0d9c-6ef3-4537-b03c-1831e3db212f`
+```text
+c89e0d9c-6ef3-4537-b03c-1831e3db212f
+```
 
 Its usage remained:
 
@@ -392,15 +531,15 @@ Its usage remained:
 }
 ```
 
-The Acme request increased only Acme's usage from 1 to 2 while the Pro tenant remained at 50,000 API calls.
+The Acme request changed only Acme's usage while the Pro tenant remained at 50,000 API calls.
 
 This demonstrates tenant-level usage isolation.
 
 ---
 
-## 10. Stripe webhook raw-body handling
+## 13. Stripe Raw-Body Handling
 
-The Stripe webhook route is mounted before `express.json()`:
+The Stripe webhook route is mounted before the application's normal JSON parser:
 
 ```text
 app.use('/webhooks/stripe', express.raw({ type: 'application/json' }), webhookRoute);
@@ -408,29 +547,125 @@ app.use('/webhooks/stripe', express.raw({ type: 'application/json' }), webhookRo
 app.use(express.json());
 ```
 
-This allows Stripe's raw request body to be passed to:
+This allows the raw request body to be passed to:
 
 ```text
 stripe.webhooks.constructEvent(...)
 ```
 
-The forged-signature test and successful Stripe CLI webhook delivery both confirm that raw-body signature verification is functioning.
+The successful Stripe CLI webhook delivery and forged-signature rejection demonstrate that Stripe webhook signature verification is functioning with the required raw request body.
 
 ---
 
-## 11. Health endpoint
+## 14. Health Endpoint
 
-The application exposes:
+The application successfully started with:
+
+```text
+Server running on http://localhost:3000
+```
+
+The health endpoint was tested with:
 
 ```text
 GET /health
 ```
 
-The server starts successfully with:
+Response:
+
+```json
+{
+  "ok": true
+}
+```
+
+HTTP status:
 
 ```text
-Server running on http://localhost:3000
+200 OK
 ```
+
+---
+
+## 15. Background Rollup Job
+
+The scheduled background rollup job was started with the application.
+
+The job queried all tenants, calculated monthly API-call usage and cost, and completed successfully:
+
+```text
+[rollup] tenant=Acme Inc api_calls=2 cost_cents=2
+[rollup] tenant=Pro Test Tenant api_calls=50000 cost_cents=50000
+[rollup] tenant=Quota Test Tenant api_calls=1000 cost_cents=1000
+[rollup] succeeded on attempt 1, processed 3 tenants
+```
+
+This confirms that the rollup job can:
+
+- connect to PostgreSQL
+- process all three tenants
+- calculate API usage
+- calculate corresponding costs in cents
+- complete successfully
+
+---
+
+## 16. Database Schema
+
+The PostgreSQL database contains:
+
+```text
+tenants
+usage_events
+processed_webhook_events
+```
+
+The database was verified with:
+
+```text
+List of relations
+Schema |           Name           | Type  | Owner
+-------+--------------------------+-------+--------
+public | processed_webhook_events | table | postgres
+public | tenants                  | table | postgres
+public | usage_events             | table | postgres
+```
+
+The `usage_events` table uses:
+
+```text
+UNIQUE (tenant_id, idempotency_key)
+```
+
+The `processed_webhook_events` table uses:
+
+```text
+stripe_event_id TEXT PRIMARY KEY
+```
+
+These constraints support request idempotency and webhook deduplication.
+
+---
+
+## 17. Final Tenant State
+
+The database was verified with:
+
+```text
+SELECT id, name, plan FROM tenants ORDER BY name;
+```
+
+Result:
+
+```text
+id                                    | name                | plan
+--------------------------------------+---------------------+------
+15247435-0fe5-48c7-9791-46ac6920fd13 | Acme Inc            | pro
+c89e0d9c-6ef3-4537-b03c-1831e3db212f | Pro Test Tenant     | pro
+bb916827-d5c7-4791-a201-4fa79732db9b | Quota Test Tenant   | free
+```
+
+The final state confirms that Stripe checkout successfully upgraded Acme Inc to Pro while the other test tenants retained their expected plans.
 
 ---
 
@@ -439,16 +674,24 @@ Server running on http://localhost:3000
 The completed system demonstrates:
 
 - Database-backed usage metering
+- Multi-tenant usage isolation
 - Idempotency using a tenant-scoped unique key
-- Free and Pro quota enforcement
+- Free-plan quota enforcement
+- Pro-plan quota enforcement
 - HTTP 402 for Free-tier quota exhaustion
 - HTTP 429 for Pro-tier quota exhaustion
-- Stripe Checkout in test mode
+- Stripe Checkout in Test Mode
 - Stripe webhook signature verification
-- Webhook event deduplication
+- Raw-body Stripe webhook handling
+- Stripe webhook event deduplication
 - Automatic Free → Pro upgrade
 - Automatic Pro → Free downgrade
-- AI token metering
+- AI-token metering
 - Cached-input and reasoning-token pricing
+- API-call cost reporting
 - Monthly usage and cost reporting
 - Tenant data isolation
+- Request validation
+- PostgreSQL persistence
+- Background rollup processing
+- Health monitoring
